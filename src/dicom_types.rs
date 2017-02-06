@@ -9,4 +9,7 @@ pub struct DicomDictElt<'a> {
     pub keyword: &'a str,
 }
 
+#[derive(Debug)]
+pub struct DicomObject { }
+
 pub type DicomDict<'a> = HashMap<u32, DicomDictElt<'a>>;
