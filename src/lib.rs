@@ -1,4 +1,5 @@
 extern crate memmap;
+extern crate flate2;
 
 use std::collections::HashMap;
 mod dicom_types;
