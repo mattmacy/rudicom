@@ -5,3 +5,4 @@ authors = ["Matt Macy <mmacy@nextbsd.org>"]
 
 [dependencies]
 memmap = "^0.5.0"
+flate2 = "^0.2.17"
