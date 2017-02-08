@@ -14,10 +14,22 @@ pub struct DicomObject<'a> {
     pub keydict: DicomKeywordDict<'a>,
 }
 
-pub enum DicomElt {
-    Float64(f64)
+#[derive(Debug)]
+pub enum DicomElt<'a> {
+    Int16(i16),
+    Int32(i32),
+    UInt16(u16),
+    UInt16s(Vec<u16>),
+    UInt32(u32),
+    Float32(f32),
+    Float64(f64),
+    Float64s(Vec<f64>),
+    Float32s(Vec<f32>),
+    String(&'a str),
+    Bytes(&'a [u8]),
+    Empty,
 }
 
 pub type DicomDict<'a> = HashMap<u32, DicomDictElt<'a>>;
-pub type DicomObjectDict<'a> = HashMap<u32, DicomElt>;
-pub type DicomKeywordDict<'a> = HashMap<&'a str, DicomElt>;
+pub type DicomObjectDict<'a> = HashMap<u32, DicomElt<'a>>;
+pub type DicomKeywordDict<'a> = HashMap<&'a str, DicomElt<'a>>;
