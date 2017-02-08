@@ -21,23 +21,59 @@ struct DicomLib<'a> {
     dict: DicomDict<'a>,
 }
 
+const EXTRA_LENGTH_VRS:[&'static str; 6] = ["OB", "OW", "OF", "SQ", "UN", "UT"];
 const VR_NAMES:[&'static str; 27] = [ "AE","AS","AT","CS","DA","DS","DT","FL","FD","IS","LO","LT","OB","OF",
        "OW","PN","SH","SL","SQ","SS","ST","TM","UI","UL","UN","US","UT" ];
 
-fn tou16(bytes: &[u8]) -> &u16 { unsafe { mem::transmute(bytes.as_ptr()) } }
-fn tou32(bytes: &[u8]) -> &u32 { unsafe { mem::transmute(bytes.as_ptr()) } }
+fn tou16(bytes: &[u8]) -> u16 { let val: &u16 = unsafe { mem::transmute(bytes.as_ptr())}; *val  }
+fn tou32(bytes: &[u8]) -> u32 { let val: &u32 = unsafe { mem::transmute(bytes.as_ptr()) }; *val }
 fn tostr(bytes: &[u8]) -> &str { str::from_utf8(bytes).unwrap() }
 fn isodd(x : usize) -> bool { x % 2 == 1 }
 
 
-fn element<'a>(data: &[u8], start: usize, evr: bool, elements: &HashMap<u32, DicomElt>) ->
-    (u32, DicomElt) {
-        let mut off = start;
-        let (grp, elt, gelt) = (tou16(&data[off..off+2]), tou16(&data[off+2..off+4]),
-                                tou32(&data[off..off+4]));
-        off += 4;
-        let entry = DicomElt::Float64(1.0);
-        (*gelt, entry)
+fn always_implicit(grp: u16, elt: u16) -> bool {
+    grp == 0xFFFE && (elt == 0xE0DD || elt == 0xE000 || elt == 0xE00D)
+}
+
+fn lookup_vr<'a>(gelt: (u16, u16)) -> Option<&'a str> {
+    Some("UL")
+}
+
+fn element<'a>(data: &[u8], start: usize, evr: bool, elements: &HashMap<u32, DicomElt>)
+               -> (u32, usize, DicomElt) {
+    let mut off = start;
+    let (grp, elt, gelt32) = (tou16(&data[off..off+2]), tou16(&data[off+2..off+4]),
+                            tou32(&data[off..off+4]));
+    off += 4;
+    let gelt = (grp, elt);
+    let (mut vr, lenbytes, diffvr) = if evr && !always_implicit(grp, elt) {
+        let vr = tostr(&data[off..off+2]);
+        let lenbytes = if EXTRA_LENGTH_VRS.contains(&vr) { off += 2; 4} else { 2 };
+        let diffvr = match lookup_vr(gelt) {
+            Some(newvr) => newvr == vr,
+            None => false
+        };
+        (vr, lenbytes, diffvr)
+    } else {
+        let vr = match lookup_vr(gelt) {
+            Some(vr) => vr,
+            None => panic!("bad vr"),
+        };
+        (vr, 4, false)
+    };
+
+    if isodd(grp as usize) && grp > 0x0008 && 0x0010 <= elt && elt < 0x00FF {
+        vr = "LO";
+    } else if isodd(grp as usize) && grp > 0x0008 {
+        vr = "UN";
+    }
+    /*
+
+    DO STUFF
+
+     */    
+    let entry = DicomElt::Float64(1.0);
+    (gelt32, off, entry)
 }
 
 fn read_dataset<'a>(dict: &DicomDict, data: &[u8], start: usize) -> Result<DicomObject<'a>> {
