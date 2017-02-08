@@ -1,6 +1,9 @@
 extern crate memmap;
 extern crate flate2;
+extern crate byteorder;
 
+use byteorder::{ReadBytesExt, BigEndian, LittleEndian};
+use std::io::Cursor;
 use std::collections::HashMap;
 use std::sync::{Once, ONCE_INIT};
 use std::marker::PhantomData;
@@ -25,9 +28,12 @@ const EXTRA_LENGTH_VRS:[&'static str; 6] = ["OB", "OW", "OF", "SQ", "UN", "UT"];
 const VR_NAMES:[&'static str; 27] = [ "AE","AS","AT","CS","DA","DS","DT","FL","FD","IS","LO","LT","OB","OF",
        "OW","PN","SH","SL","SQ","SS","ST","TM","UI","UL","UN","US","UT" ];
 
-fn tou16(bytes: &[u8]) -> u16 { let val: &u16 = unsafe { mem::transmute(bytes.as_ptr())}; *val  }
-fn tou32(bytes: &[u8]) -> u32 { let val: &u32 = unsafe { mem::transmute(bytes.as_ptr()) }; *val }
-fn tostr(bytes: &[u8]) -> &str { str::from_utf8(bytes).unwrap() }
+fn u8tou16(bytes: &[u8]) -> u16 { let val: &u16 = unsafe { mem::transmute(bytes.as_ptr())}; *val  }
+fn u8tou32(bytes: &[u8]) -> u32 { let val: &u32 = unsafe { mem::transmute(bytes.as_ptr()) }; *val }
+fn u8tostr(bytes: &[u8]) -> &str { str::from_utf8(bytes).unwrap() }
+
+fn u16tou32(bytes: &[u16]) -> u32 { let val: &u32 = unsafe { mem::transmute(bytes.as_ptr()) }; *val }
+
 fn isodd(x : usize) -> bool { x % 2 == 1 }
 
 
@@ -35,27 +41,59 @@ fn always_implicit(grp: u16, elt: u16) -> bool {
     grp == 0xFFFE && (elt == 0xE0DD || elt == 0xE000 || elt == 0xE00D)
 }
 
-fn lookup_vr<'a>(gelt: (u16, u16)) -> Option<&'a str> {
-    Some("UL")
+fn numeric_parse<'a>(mut c : Cursor<&[u8]>, elt : DicomElt<'a>, count : usize) -> DicomElt<'a> {
+    let mut uv = Vec::new();
+    let mut f32v = Vec::new();
+    let mut f64v = Vec::new();
+    for i in 0..count {
+        match elt {
+            DicomElt::UInt16s(_) => uv.push(c.read_u16::<BigEndian>().unwrap()),
+            DicomElt::Float32s(_) => f32v.push(c.read_f32::<BigEndian>().unwrap()),
+            DicomElt::Float64s(_) => f64v.push(c.read_f64::<BigEndian>().unwrap()),
+            _ => panic!("bad type: {:?}", elt)
+        }
+    }
+    match elt {
+        DicomElt::UInt16s(_) => DicomElt::UInt16s(uv),
+        DicomElt::Float32s(_) => DicomElt::Float32s(f32v),
+        DicomElt::Float64s(_) => DicomElt::Float64s(f64v),
+        _ => panic!("bad type: {:?}", elt)
+    }
 }
 
-fn element<'a>(data: &[u8], start: usize, evr: bool, elements: &HashMap<u32, DicomElt>)
-               -> (u32, usize, DicomElt) {
+fn lookup_vr<'a>(dict: &DicomDict<'a>, gelt: (u16, u16)) -> Option<&'a str> {
+    let key = if gelt.0 & 0xff00 == 0x5000 {
+        [0x5000, gelt.1]
+    } else if gelt.0 & 0xff00 == 0x6000 {
+        [0x6000, gelt.1]
+    } else {
+        [gelt.0, gelt.1]
+    };
+    let vr_key = u16tou32(&key);
+    let result = dict.get(&vr_key);
+    match result {
+        Some(elt) => Some(elt.vr),
+        None => return None,
+    }
+}
+
+fn element<'a>(dict: &DicomDict<'a>, data: &'a [u8], start: usize, evr: bool, elements: &DicomObjectDict<'a>)
+               -> (u32, usize, DicomElt<'a>) {
     let mut off = start;
-    let (grp, elt, gelt32) = (tou16(&data[off..off+2]), tou16(&data[off+2..off+4]),
-                            tou32(&data[off..off+4]));
+    let (grp, elt, gelt32) = (u8tou16(&data[off..off+2]), u8tou16(&data[off+2..off+4]),
+                              u8tou32(&data[off..off+4]));
     off += 4;
     let gelt = (grp, elt);
     let (mut vr, lenbytes, diffvr) = if evr && !always_implicit(grp, elt) {
-        let vr = tostr(&data[off..off+2]);
+        let vr = u8tostr(&data[off..off+2]);
         let lenbytes = if EXTRA_LENGTH_VRS.contains(&vr) { off += 2; 4} else { 2 };
-        let diffvr = match lookup_vr(gelt) {
+        let diffvr = match lookup_vr(dict, gelt) {
             Some(newvr) => newvr == vr,
             None => false
         };
         (vr, lenbytes, diffvr)
     } else {
-        let vr = match lookup_vr(gelt) {
+        let vr = match lookup_vr(dict, gelt) {
             Some(vr) => vr,
             None => panic!("bad vr"),
         };
@@ -67,18 +105,38 @@ fn element<'a>(data: &[u8], start: usize, evr: bool, elements: &HashMap<u32, Dic
     } else if isodd(grp as usize) && grp > 0x0008 {
         vr = "UN";
     }
-    /*
-
-    DO STUFF
-
-     */    
-    let entry = DicomElt::Float64(1.0);
+    let sz = if lenbytes == 4 {
+        u8tou32(&data[off..off+4]) as usize }
+    else {
+        u8tou16(&data[off..off+2]) as usize
+    };
+    off += lenbytes;
+    let entry = if sz == 0 || vr == "XX" {
+        DicomElt::Empty
+    } else {
+        let mut r = Cursor::new(&data[off..off+sz]);
+        match vr {
+            "ST" | "LT" | "UT" => DicomElt::String(u8tostr(&data[off..off+sz])),
+            "FL" => DicomElt::Float32(r.read_f32::<LittleEndian>().unwrap()),
+            "FD" => DicomElt::Float64(r.read_f64::<LittleEndian>().unwrap()),
+            "SL" => DicomElt::Int32(r.read_i32::<LittleEndian>().unwrap()),
+            "SS" => DicomElt::Int16(r.read_i16::<LittleEndian>().unwrap()),
+            "UL" => DicomElt::UInt32(r.read_u32::<LittleEndian>().unwrap()),
+            "US" => DicomElt::UInt16(r.read_u16::<LittleEndian>().unwrap()),
+            "OB" => DicomElt::Bytes(&data[off..off+sz]),
+            "OD" => numeric_parse(r, DicomElt::Float64s(vec![]), sz/8),
+            "OF" => numeric_parse(r, DicomElt::Float32s(vec![]), sz/4),
+            "OW" => numeric_parse(r, DicomElt::UInt16s(vec![]), sz/2),
+            _ => panic!("bad vr: {}", vr),
+        }
+    };
+    off += sz as usize;
     (gelt32, off, entry)
 }
 
 fn read_dataset<'a>(dict: &DicomDict, data: &[u8], start: usize) -> Result<DicomObject<'a>> {
     let mut off = start;
-    let sig = tostr(&data[off+4..off+6]);
+    let sig = u8tostr(&data[off+4..off+6]);
     let evr = VR_NAMES.contains(&sig);
     let elements : DicomObjectDict = HashMap::new();
     let state : DicomKeywordDict = HashMap::new();
