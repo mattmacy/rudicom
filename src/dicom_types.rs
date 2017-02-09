@@ -14,6 +14,10 @@ pub struct DicomObject<'a> {
     pub keydict: DicomKeywordDict<'a>,
 }
 
+pub struct SeqItem {
+}
+
+
 #[derive(Debug)]
 pub enum DicomElt<'a> {
     Int16(i16),
@@ -25,6 +29,7 @@ pub enum DicomElt<'a> {
     Float64(f64),
     Float64s(Vec<f64>),
     Float32s(Vec<f32>),
+    Seq(Vec<DicomElt<'a>>),
     String(&'a str),
     Bytes(&'a [u8]),
     Empty,

@@ -11,7 +11,7 @@ use std::path::Path;
 use std::str;
 use std::mem;
 mod dicom_types;
-use dicom_types::{DicomDict, DicomObjectDict, DicomDictElt, DicomElt, DicomKeywordDict};
+use dicom_types::{DicomDict, DicomObjectDict, DicomDictElt, DicomElt, DicomKeywordDict, SeqItem};
 mod dicom_dict;
 use dicom_dict::dicom_dictionary_init;
 use dicom_types::DicomObject;
@@ -39,6 +39,31 @@ fn isodd(x : usize) -> bool { x % 2 == 1 }
 
 fn always_implicit(grp: u16, elt: u16) -> bool {
     grp == 0xFFFE && (elt == 0xE0DD || elt == 0xE000 || elt == 0xE00D)
+}
+
+
+fn sequence_item<'a>(dict: &DicomDict<'a>, bytes : &'a [u8], off : &mut usize, evr: bool, sz : usize, items : &mut Vec<DicomElt<'a>>) {
+
+    while *off < sz {
+        let (gelt, off,  elt) = element(dict, bytes, off, evr, None);
+        if gelt == (0xFFFE, 0xE00D) {break}
+        items.push(elt);
+    }
+}
+
+fn sequence_parse<'a>(dict: &DicomDict<'a>, data : &'a [u8], evr: bool) -> (usize, DicomElt<'a>) {
+    let mut sq  = Vec::new();
+    let mut off = 0;
+    let len = data.len();
+    while off < len {
+        let (grp, elt) = (u8tou16(&data[off..off+2]), u8tou16(&data[off+2..off+4]));
+        let itemlen = u8tou32(&data[off+4..off+8]) as usize;
+        off += 8;
+        if grp == 0xFFFE && elt == 0xE0DD { break }
+        if grp != 0xFFFE && elt != 0xE000 { panic!("dicom: expected item tag in sequence") }
+        sequence_item(dict, data, &mut off, evr, itemlen, &mut sq);
+    }
+    (off, DicomElt::Seq(sq))
 }
 
 fn numeric_parse<'a>(mut c : Cursor<&[u8]>, elt : DicomElt<'a>, count : usize) -> DicomElt<'a> {
@@ -77,11 +102,11 @@ fn lookup_vr<'a>(dict: &DicomDict<'a>, gelt: (u16, u16)) -> Option<&'a str> {
     }
 }
 
-fn element<'a>(dict: &DicomDict<'a>, data: &'a [u8], start: usize, evr: bool, elements: &DicomObjectDict<'a>)
-               -> (u32, usize, DicomElt<'a>) {
-    let mut off = start;
-    let (grp, elt, gelt32) = (u8tou16(&data[off..off+2]), u8tou16(&data[off+2..off+4]),
-                              u8tou32(&data[off..off+4]));
+fn element<'a>(dict: &DicomDict<'a>, data: &'a [u8], start: &mut usize, evr: bool, elements: Option<&DicomObjectDict<'a>>)
+               -> ((u16, u16), usize, DicomElt<'a>) {
+    let mut off = *start;
+    let (grp, elt) = (u8tou16(&data[off..off+2]), u8tou16(&data[off+2..off+4]));
+
     off += 4;
     let gelt = (grp, elt);
     let (mut vr, lenbytes, diffvr) = if evr && !always_implicit(grp, elt) {
@@ -105,7 +130,7 @@ fn element<'a>(dict: &DicomDict<'a>, data: &'a [u8], start: usize, evr: bool, el
     } else if isodd(grp as usize) && grp > 0x0008 {
         vr = "UN";
     }
-    let sz = if lenbytes == 4 {
+    let mut sz = if lenbytes == 4 {
         u8tou32(&data[off..off+4]) as usize }
     else {
         u8tou16(&data[off..off+2]) as usize
@@ -116,6 +141,10 @@ fn element<'a>(dict: &DicomDict<'a>, data: &'a [u8], start: usize, evr: bool, el
     } else {
         let mut r = Cursor::new(&data[off..off+sz]);
         match vr {
+            "AT" => DicomElt::UInt16s(vec![r.read_u16::<LittleEndian>().unwrap(),
+                                           r.read_u16::<LittleEndian>().unwrap()]),
+            "AE" | "AS" | "CS" | "DA" | "DT" | "LO" | "PN" | "SH" | "TM" | "UI" =>
+                DicomElt::String(u8tostr(&data[off..off+sz])),
             "ST" | "LT" | "UT" => DicomElt::String(u8tostr(&data[off..off+sz])),
             "FL" => DicomElt::Float32(r.read_f32::<LittleEndian>().unwrap()),
             "FD" => DicomElt::Float64(r.read_f64::<LittleEndian>().unwrap()),
@@ -127,11 +156,13 @@ fn element<'a>(dict: &DicomDict<'a>, data: &'a [u8], start: usize, evr: bool, el
             "OD" => numeric_parse(r, DicomElt::Float64s(vec![]), sz/8),
             "OF" => numeric_parse(r, DicomElt::Float32s(vec![]), sz/4),
             "OW" => numeric_parse(r, DicomElt::UInt16s(vec![]), sz/2),
-            _ => panic!("bad vr: {}", vr),
+            "SQ" => {let (newoff, newelt) = sequence_parse(dict, &data[off..off+sz], evr);
+                     assert!(newoff <= sz); sz -= sz - newoff; newelt} ,
+             _ => panic!("bad vr: {}", vr),
         }
     };
     off += sz as usize;
-    (gelt32, off, entry)
+    (gelt, off, entry)
 }
 
 fn read_dataset<'a>(dict: &DicomDict, data: &[u8], start: usize) -> Result<DicomObject<'a>> {
