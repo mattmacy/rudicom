@@ -41,6 +41,28 @@ fn always_implicit(grp: u16, elt: u16) -> bool {
     grp == 0xFFFE && (elt == 0xE0DD || elt == 0xE000 || elt == 0xE00D)
 }
 
+/*
+fn pixeldata_parse(data: &[u8], sz: usize, vr: &str, elements: Option<&DicomObjectDict<'a>>) -> () {
+    let (xr, wsize) = if vr == "OB" {(sz, 1)} else { (sz/2, 2) };
+    let (xr, yr, zr) = match elements {
+        Some(eltdict) => {
+            let xr = match elements.get(0x00280010) {
+                Some(DicomElt::UInt16(val)) => val,
+                None => xr,
+            }
+            let yr = match elements.get(0x00280011) {
+                Some(DicomElt::UInt16(val)) => val,
+                None => 1,
+            }
+            let zr = match elements.get(0x00280012) {
+                Some(DicomElt::UInt16(val)) => val,
+                None => 1,
+            }
+        }
+        None => (xy, 1, 1)
+    }
+}
+ */
 
 fn sequence_item<'a>(dict: &DicomDict<'a>, bytes : &'a [u8], off : &mut usize, evr: bool, sz : usize, items : &mut Vec<DicomElt<'a>>) {
 
@@ -49,6 +71,24 @@ fn sequence_item<'a>(dict: &DicomDict<'a>, bytes : &'a [u8], off : &mut usize, e
         if gelt == (0xFFFE, 0xE00D) {break}
         items.push(elt);
     }
+}
+
+fn undefined_length(data : &[u8]) -> (usize, Vec<u16>) {
+    let mut v = Vec::new();
+    let (mut w1, mut w2) = (0, 0);
+    let mut off = 0;
+    loop {
+        w1 = w2;
+        w2 = u8tou16(&data[off..off+2]);
+        off += 2;
+        if w1 == 0xFFFE {
+            if w2 == 0xE0DD { break }
+            v.push(w1);
+        }
+        if w2 != 0xFFFE { v.push(w2); }
+    }
+    off += 4;
+    (off, v)
 }
 
 fn sequence_parse<'a>(dict: &DicomDict<'a>, data : &'a [u8], evr: bool) -> (usize, DicomElt<'a>) {
@@ -70,7 +110,7 @@ fn numeric_parse<'a>(mut c : Cursor<&[u8]>, elt : DicomElt<'a>, count : usize) -
     let mut uv = Vec::new();
     let mut f32v = Vec::new();
     let mut f64v = Vec::new();
-    for i in 0..count {
+    for _ in 0..count {
         match elt {
             DicomElt::UInt16s(_) => uv.push(c.read_u16::<BigEndian>().unwrap()),
             DicomElt::Float32s(_) => f32v.push(c.read_f32::<BigEndian>().unwrap()),
@@ -138,6 +178,13 @@ fn element<'a>(dict: &DicomDict<'a>, data: &'a [u8], start: &mut usize, evr: boo
     off += lenbytes;
     let entry = if sz == 0 || vr == "XX" {
         DicomElt::Empty
+    } else if sz == 0xffffffff {
+        let (len, v) = undefined_length(&data[off..]);
+        sz = len;
+        DicomElt::UInt16s(v)
+    } else if gelt == (0x7FE0, 0x0010) {
+        //pixeldata_parse(&data[off..off+sz], vr, elements)
+        DicomElt::Empty
     } else {
         let mut r = Cursor::new(&data[off..off+sz]);
         match vr {
@@ -145,6 +192,8 @@ fn element<'a>(dict: &DicomDict<'a>, data: &'a [u8], start: &mut usize, evr: boo
                                            r.read_u16::<LittleEndian>().unwrap()]),
             "AE" | "AS" | "CS" | "DA" | "DT" | "LO" | "PN" | "SH" | "TM" | "UI" =>
                 DicomElt::String(u8tostr(&data[off..off+sz])),
+            // "DS" =>
+            // "IS" =>
             "ST" | "LT" | "UT" => DicomElt::String(u8tostr(&data[off..off+sz])),
             "FL" => DicomElt::Float32(r.read_f32::<LittleEndian>().unwrap()),
             "FD" => DicomElt::Float64(r.read_f64::<LittleEndian>().unwrap()),
