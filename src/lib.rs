@@ -29,9 +29,9 @@ const VR_NAMES:[&'static str; 27] = [ "AE","AS","AT","CS","DA","DS","DT","FL","F
        "OW","PN","SH","SL","SQ","SS","ST","TM","UI","UL","UN","US","UT" ];
 
 fn u8tou16(bytes: &[u8]) -> u16 { let val: &u16 = unsafe { mem::transmute(bytes.as_ptr())}; *val  }
+fn u8stou16s<'a>(bytes: &[u8]) -> &'a [u16] { unsafe { mem::transmute(bytes) } }
 fn u8tou32(bytes: &[u8]) -> u32 { let val: &u32 = unsafe { mem::transmute(bytes.as_ptr()) }; *val }
 fn u8tostr(bytes: &[u8]) -> &str { str::from_utf8(bytes).unwrap() }
-
 fn u16tou32(bytes: &[u16]) -> u32 { let val: &u32 = unsafe { mem::transmute(bytes.as_ptr()) }; *val }
 
 fn isodd(x : usize) -> bool { x % 2 == 1 }
@@ -41,28 +41,74 @@ fn always_implicit(grp: u16, elt: u16) -> bool {
     grp == 0xFFFE && (elt == 0xE0DD || elt == 0xE000 || elt == 0xE00D)
 }
 
-/*
-fn pixeldata_parse(data: &[u8], sz: usize, vr: &str, elements: Option<&DicomObjectDict<'a>>) -> () {
+fn pixeldata_parse<'a>(data: &[u8], sz: usize, vr: &str, elementsopt: Option<&DicomObjectDict<'a>>) -> (DicomElt<'a>, usize) {
     let (xr, wsize) = if vr == "OB" {(sz, 1)} else { (sz/2, 2) };
-    let (xr, yr, zr) = match elements {
-        Some(eltdict) => {
-            let xr = match elements.get(0x00280010) {
-                Some(DicomElt::UInt16(val)) => val,
-                None => xr,
-            }
-            let yr = match elements.get(0x00280011) {
-                Some(DicomElt::UInt16(val)) => val,
-                None => 1,
-            }
-            let zr = match elements.get(0x00280012) {
-                Some(DicomElt::UInt16(val)) => val,
-                None => 1,
-            }
+
+    let (xr, yr, zr) = match elementsopt {
+        Some(elements) => {
+            let (xa, ya, za) = (0x00280010, 0x00280011, 0x00280012);
+            let xr = match elements.get(&xa) {
+                Some(&DicomElt::UInt16(val)) => val as usize,
+                Some(_) | None => xr,
+            };
+            let yr = match elements.get(&ya) {
+                Some(&DicomElt::UInt16(val)) => val as usize,
+                Some(_) | None => 1 as usize,
+            };
+            let zr = match elements.get(&za) {
+                Some(&DicomElt::UInt16(val)) => val as usize,
+                Some(_) | None => 1 as usize,
+            };
+            (xr, yr, zr)
+        },
+        None => (xr, 1 as usize, 1 as usize),
+    };
+    if yr != 1 || zr != 1 {panic!("don't yet support > 1D pixel arrays")}
+    let (result, newoff) = if sz != 0xffffffff {
+        let dp : &[u8]= &data[0..sz];
+        let v = match wsize {
+            2 => {
+                let dp16 : &[u16] = u8stou16s(dp);
+                let mut resvec16 : Vec<u16> = Vec::new();
+                resvec16.extend_from_slice(dp16);
+                //let resvec16 = vec![].extend(u8stou16s(&data[0..sz]).iter().cloned());
+                DicomElt::UInt16s(resvec16)
+            },
+            1 => {
+                let mut resvec8 : Vec<u8> = Vec::new();
+                resvec8.extend_from_slice(dp);
+                DicomElt::Bytes(resvec8)
+            },
+            _ => panic!("bad wsize"),
+
+        };
+        (v, sz)
+    } else {
+        let mut off = 0;
+        let mut resvec8 = Vec::new();
+        let mut resvec16 = Vec::new();
+        loop {
+            let (grp, elt) = (u8tou16(&data[off..off+2]), u8tou16(&data[off+2..off+4]));
+            let xr = u8tou32(&data[off+4..off+8]) as usize;
+            off += 8;
+            if grp == 0xFFFE && elt == 0xE0DD { break; }
+            if grp != 0xFFFE || elt != 0xE000 { panic!("dicom: expected item tag in encapsulated pixel data"); }
+            let dp = &data[off..off+xr];
+            let val = match wsize {
+                2 => resvec16.extend_from_slice(u8stou16s(dp)),
+                1 => resvec8.extend_from_slice(dp),
+                _ => panic!("bad wsize"),
+            };
+            off += xr;
+        };
+        match wsize {
+            2 => (DicomElt::UInt16s(resvec16), off),
+            1 => (DicomElt::Bytes(resvec8), off),
+            _ => panic!("bad wsize"),
         }
-        None => (xy, 1, 1)
-    }
+    };
+    (result, newoff)
 }
- */
 
 fn sequence_item<'a>(dict: &DicomDict<'a>, bytes : &'a [u8], off : &mut usize, evr: bool, sz : usize, items : &mut Vec<DicomElt<'a>>) {
 
@@ -176,6 +222,7 @@ fn element<'a>(dict: &DicomDict<'a>, data: &'a [u8], start: &mut usize, evr: boo
         u8tou16(&data[off..off+2]) as usize
     };
     off += lenbytes;
+    let end = off + sz;
     let entry = if sz == 0 || vr == "XX" {
         DicomElt::Empty
     } else if sz == 0xffffffff {
@@ -183,8 +230,9 @@ fn element<'a>(dict: &DicomDict<'a>, data: &'a [u8], start: &mut usize, evr: boo
         sz = len;
         DicomElt::UInt16s(v)
     } else if gelt == (0x7FE0, 0x0010) {
-        //pixeldata_parse(&data[off..off+sz], vr, elements)
-        DicomElt::Empty
+        let (elt, len) = pixeldata_parse(&data[off..], sz, vr, elements);
+        sz = len;
+        elt
     } else {
         let mut r = Cursor::new(&data[off..off+sz]);
         match vr {
@@ -201,11 +249,11 @@ fn element<'a>(dict: &DicomDict<'a>, data: &'a [u8], start: &mut usize, evr: boo
             "SS" => DicomElt::Int16(r.read_i16::<LittleEndian>().unwrap()),
             "UL" => DicomElt::UInt32(r.read_u32::<LittleEndian>().unwrap()),
             "US" => DicomElt::UInt16(r.read_u16::<LittleEndian>().unwrap()),
-            "OB" => DicomElt::Bytes(&data[off..off+sz]),
+            "OB" => { let mut v = Vec::new(); v.extend_from_slice(&data[off..end]); DicomElt::Bytes(v)},
             "OD" => numeric_parse(r, DicomElt::Float64s(vec![]), sz/8),
             "OF" => numeric_parse(r, DicomElt::Float32s(vec![]), sz/4),
             "OW" => numeric_parse(r, DicomElt::UInt16s(vec![]), sz/2),
-            "SQ" => {let (newoff, newelt) = sequence_parse(dict, &data[off..off+sz], evr);
+            "SQ" => {let (newoff, newelt) = sequence_parse(dict, &data[off..end], evr);
                      assert!(newoff <= sz); sz -= sz - newoff; newelt} ,
              _ => panic!("bad vr: {}", vr),
         }

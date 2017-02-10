@@ -31,7 +31,7 @@ pub enum DicomElt<'a> {
     Float32s(Vec<f32>),
     Seq(Vec<DicomElt<'a>>),
     String(&'a str),
-    Bytes(&'a [u8]),
+    Bytes(Vec<u8>),
     Empty,
 }
 
