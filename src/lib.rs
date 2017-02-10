@@ -188,7 +188,7 @@ fn lookup_vr<'a>(dict: &DicomDict<'a>, gelt: (u16, u16)) -> Option<&'a str> {
     }
 }
 
-fn element<'a>(dict: &DicomDict, data: &[u8], start: &mut usize, evr: bool, elements: Option<&DicomObjectDict>)
+fn element<'a>(dict: &DicomDict<'a>, data: &'a [u8], start: &mut usize, evr: bool, elements: Option<&DicomObjectDict<'a>>)
                -> ((u16, u16), usize, DicomElt<'a>) {
     let mut off = *start;
     let (grp, elt) = (u8tou16(&data[off..off+2]), u8tou16(&data[off+2..off+4]));
@@ -262,19 +262,17 @@ fn element<'a>(dict: &DicomDict, data: &[u8], start: &mut usize, evr: bool, elem
     (gelt, off, entry)
 }
 
-fn read_dataset<'a>(dict: &DicomDict, data: &[u8], start: usize) -> Result<DicomObject<'a>> {
+fn read_dataset<'a>(dict: &DicomDict<'a>, data: &'a [u8], start: usize) -> Result<DicomObject<'a>> {
     let mut off = start;
     let sig = u8tostr(&data[off+4..off+6]);
     let evr = VR_NAMES.contains(&sig);
     let mut elements : DicomObjectDict = HashMap::new();
     let state : DicomKeywordDict = HashMap::new();
-/*
     while off < data.len() - 2 {
         let (gelt, off, elt) = element(dict, data, &mut off, evr, Some(&elements));
         let tag = u16tou32(&[gelt.0, gelt.1] );
         elements.insert(tag, elt);
     }
-*/
     Ok(DicomObject {odict : elements, keydict : state } )
 }
 
