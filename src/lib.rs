@@ -41,7 +41,7 @@ fn always_implicit(grp: u16, elt: u16) -> bool {
     grp == 0xFFFE && (elt == 0xE0DD || elt == 0xE000 || elt == 0xE00D)
 }
 
-fn pixeldata_parse<'a>(data: &[u8], sz: usize, vr: &str, elementsopt: Option<&DicomObjectDict<'a>>) -> (DicomElt<'a>, usize) {
+fn pixeldata_parse<'a, 'b, 'c>(data: &'a [u8], sz: usize, vr: &str, elementsopt: Option<&DicomObjectDict<'b>>) -> (DicomElt<'c>, usize) {
     let (xr, wsize) = if vr == "OB" {(sz, 1)} else { (sz/2, 2) };
 
     let (xr, yr, zr) = match elementsopt {
@@ -188,7 +188,7 @@ fn lookup_vr<'a>(dict: &DicomDict<'a>, gelt: (u16, u16)) -> Option<&'a str> {
     }
 }
 
-fn element<'a>(dict: &DicomDict<'a>, data: &'a [u8], start: &mut usize, evr: bool, elements: Option<&DicomObjectDict<'a>>)
+fn element<'a,  'c>(dict: &DicomDict<'a>, data: &'a [u8], start: &mut usize, evr: bool, elements: Option<&DicomObjectDict<'c>>)
                -> ((u16, u16), usize, DicomElt<'a>) {
     let mut off = *start;
     let (grp, elt) = (u8tou16(&data[off..off+2]), u8tou16(&data[off+2..off+4]));
@@ -239,10 +239,10 @@ fn element<'a>(dict: &DicomDict<'a>, data: &'a [u8], start: &mut usize, evr: boo
             "AT" => DicomElt::UInt16s(vec![r.read_u16::<LittleEndian>().unwrap(),
                                            r.read_u16::<LittleEndian>().unwrap()]),
             "AE" | "AS" | "CS" | "DA" | "DT" | "LO" | "PN" | "SH" | "TM" | "UI" =>
-                DicomElt::String(u8tostr(&data[off..off+sz])),
-            // "DS" =>
-            // "IS" =>
-            "ST" | "LT" | "UT" => DicomElt::String(u8tostr(&data[off..off+sz])),
+                DicomElt::String(u8tostr(&data[off..off+sz]).clone()),
+            "DS" => panic!("VR DS unimplemented"),
+            "IS" => panic!("VR IS unimplemented"),
+            "ST" | "LT" | "UT" => DicomElt::String(u8tostr(&data[off..off+sz]).clone()),
             "FL" => DicomElt::Float32(r.read_f32::<LittleEndian>().unwrap()),
             "FD" => DicomElt::Float64(r.read_f64::<LittleEndian>().unwrap()),
             "SL" => DicomElt::Int32(r.read_i32::<LittleEndian>().unwrap()),
@@ -262,18 +262,17 @@ fn element<'a>(dict: &DicomDict<'a>, data: &'a [u8], start: &mut usize, evr: boo
     (gelt, off, entry)
 }
 
-fn read_dataset<'a>(dict: &DicomDict, data: &[u8], start: usize) -> Result<DicomObject<'a>> {
+fn read_dataset<'a>(dict: &'a DicomDict, data: &'a [u8], start: usize) -> Result<DicomObject<'a>> {
     let mut off = start;
     let sig = u8tostr(&data[off+4..off+6]);
     let evr = VR_NAMES.contains(&sig);
-    let elements : DicomObjectDict = HashMap::new();
+    let mut elements : DicomObjectDict = HashMap::new();
     let state : DicomKeywordDict = HashMap::new();
-    /*
     while off < data.len() - 2 {
-        let (tag, elt) = element(data, &mut off, evr, &elements);
+        let (gelt, off, elt) = element(dict, data, &mut off, evr, Some(&elements));
+        let tag = u16tou32(&[gelt.0, gelt.1] );
         elements.insert(tag, elt);
     }
-     */
     Ok(DicomObject {odict : elements, keydict : state } )
 }
 
