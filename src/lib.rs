@@ -5,13 +5,11 @@ extern crate byteorder;
 use byteorder::{ReadBytesExt, BigEndian, LittleEndian};
 use std::io::Cursor;
 use std::collections::HashMap;
-use std::sync::{Once, ONCE_INIT};
-use std::marker::PhantomData;
 use std::path::Path;
 use std::str;
 use std::mem;
 mod dicom_types;
-use dicom_types::{DicomDict, DicomObjectDict, DicomDictElt, DicomElt, DicomKeywordDict, SeqItem};
+use dicom_types::{DicomDict, DicomObjectDict, DicomDictElt, DicomElt, DicomKeywordDict};
 mod dicom_dict;
 use dicom_dict::dicom_dictionary_init;
 use dicom_types::DicomObject;
@@ -271,6 +269,7 @@ fn read_dataset<'a>(dict: &DicomDict<'a>, data: &[u8], start: usize) -> Result<D
     while off < data.len() - 2 {
         let (gelt, off, elt) = element(dict, data, &mut off, evr, Some(&elements));
         let tag = u16tou32(&[gelt.0, gelt.1] );
+        println!("tag: {} off: {}", tag, off);
         elements.insert(tag, elt);
     }
     Ok(DicomObject {odict : elements, keydict : state } )
