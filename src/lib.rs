@@ -262,17 +262,19 @@ fn element<'a,  'c>(dict: &DicomDict<'a>, data: &'a [u8], start: &mut usize, evr
     (gelt, off, entry)
 }
 
-fn read_dataset<'a>(dict: &'a DicomDict, data: &'a [u8], start: usize) -> Result<DicomObject<'a>> {
+fn read_dataset<'a>(dict: &DicomDict, data: &[u8], start: usize) -> Result<DicomObject<'a>> {
     let mut off = start;
     let sig = u8tostr(&data[off+4..off+6]);
     let evr = VR_NAMES.contains(&sig);
     let mut elements : DicomObjectDict = HashMap::new();
     let state : DicomKeywordDict = HashMap::new();
+/*
     while off < data.len() - 2 {
         let (gelt, off, elt) = element(dict, data, &mut off, evr, Some(&elements));
         let tag = u16tou32(&[gelt.0, gelt.1] );
         elements.insert(tag, elt);
     }
+*/
     Ok(DicomObject {odict : elements, keydict : state } )
 }
 
