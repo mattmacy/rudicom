@@ -19,7 +19,7 @@ pub struct SeqItem {
 
 
 #[derive(Debug)]
-pub enum DicomElt<'a> {
+pub enum DicomElt {
     Int16(i16),
     Int32(i32),
     UInt16(u16),
@@ -29,12 +29,12 @@ pub enum DicomElt<'a> {
     Float64(f64),
     Float64s(Vec<f64>),
     Float32s(Vec<f32>),
-    Seq(Vec<DicomElt<'a>>),
-    String(&'a str),
+    Seq(Vec<DicomElt>),
+    String(String),
     Bytes(Vec<u8>),
     Empty,
 }
 
 pub type DicomDict<'a> = HashMap<u32, DicomDictElt<'a>>;
-pub type DicomObjectDict<'a> = HashMap<u32, DicomElt<'a>>;
-pub type DicomKeywordDict<'a> = HashMap<&'a str, DicomElt<'a>>;
+pub type DicomObjectDict<'a> = HashMap<u32, DicomElt>;
+pub type DicomKeywordDict<'a> = HashMap<&'a str, DicomElt>;
