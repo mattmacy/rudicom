@@ -188,7 +188,7 @@ fn lookup_vr<'a>(dict: &DicomDict<'a>, gelt: (u16, u16)) -> Option<&'a str> {
     }
 }
 
-fn element<'a,  'c>(dict: &DicomDict<'a>, data: &'a [u8], start: &mut usize, evr: bool, elements: Option<&DicomObjectDict<'c>>)
+fn element<'a>(dict: &DicomDict, data: &[u8], start: &mut usize, evr: bool, elements: Option<&DicomObjectDict>)
                -> ((u16, u16), usize, DicomElt<'a>) {
     let mut off = *start;
     let (grp, elt) = (u8tou16(&data[off..off+2]), u8tou16(&data[off+2..off+4]));
