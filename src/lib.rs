@@ -460,4 +460,12 @@ mod tests {
         let decoded2 : Vec<DicomObject> = deserialize(&encoded2[..]).unwrap();
         assert_eq!(result, decoded2);
     }
+    #[test]
+    fn parse_set_deserialize() {
+        let mut buffer = File::open("dicom.rsbin").unwrap();
+        let mut encoded = Vec::new();
+        buffer.read_to_end(&mut encoded);
+        let decoded : Vec<DicomObject> = deserialize(&encoded[..]).unwrap();
+    }
+
 }
