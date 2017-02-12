@@ -18,8 +18,14 @@ use dataset::read_dataset;
 use std::path::Path;
 use std::fs;
 use memmap::{Mmap, Protection};
-use std::io::Result;
+use std::io::{Error, ErrorKind, Result};
 use std::str;
+
+use std::fs::File;
+use std::io::prelude::*;
+use bincode::SizeLimit;
+use bincode::{serialize, deserialize};
+
 
 pub struct DicomLib<'a> {
     dict: DicomDict<'a>,
@@ -52,15 +58,29 @@ impl<'a> DicomLib<'a> {
         }
         Ok(v)
     }
+
+    pub fn serialize_set<P>(&self, path: P, set: Vec<DicomObject>) -> Result<usize> where P : AsRef<Path> {
+        let mut buffer = File::create(path)?;
+        let limit = SizeLimit::Infinite;
+        let encoded : Vec<u8> = serialize(&set, limit).expect("serialize fail");
+        let size = buffer.write(&encoded)?;
+        Ok(size)
+    }
+
+    pub fn deserialize_set<P>(&self, path: P) -> Result<Vec<DicomObject>> where P : AsRef<Path> {
+        let mut buffer = File::open(path)?;
+        let mut encoded = Vec::new();
+        let size = buffer.read_to_end(&mut encoded)?;
+        if size == 0 { return Err(Error::new(ErrorKind::UnexpectedEof, "Empty File")); };
+        let decoded = deserialize(&encoded[..]).expect("deserialize fail");
+        Ok(decoded)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::prelude::*;
-    use std::fs::File;
-    use bincode::SizeLimit;
-    use bincode::{serialize, deserialize};
 
     #[test]
     fn parse_works() {
