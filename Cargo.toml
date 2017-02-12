@@ -7,4 +7,6 @@ authors = ["Matt Macy <mmacy@nextbsd.org>"]
 memmap = "^0.5.0"
 flate2 = "^0.2.17"
 byteorder = "^1"
-rulinalg = "^0.4.1"
+bincode = "^1.0.0-alpha2"
+serde = "^0.9.7"
+serde_derive = "^0.9"
