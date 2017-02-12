@@ -15,6 +15,22 @@ pub struct DicomObject {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DcmImg16 {
+    pub xr : usize,
+    pub yr : usize,
+    pub zr : usize,
+    pub data : Vec<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DcmImg8 {
+    pub xr : usize,
+    pub yr : usize,
+    pub zr : usize,
+    pub data : Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum DicomElt {
     Int16s(Vec<i16>),
     UInt16s(Vec<u16>),
@@ -25,6 +41,8 @@ pub enum DicomElt {
     Seq(Vec<DicomElt>),
     String(String),
     Bytes(Vec<u8>),
+    Image16(DcmImg16),
+    Image8(DcmImg8),
     Empty,
 }
 
