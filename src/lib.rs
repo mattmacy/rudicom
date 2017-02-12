@@ -1,24 +1,32 @@
 extern crate memmap;
 extern crate flate2;
 extern crate byteorder;
-extern crate rulinalg;
 
-use byteorder::{ReadBytesExt, WriteBytesExt, BigEndian, LittleEndian};
+#[macro_use]
+extern crate serde_derive;
+
+extern crate bincode;
+extern crate serde;
+
+use bincode::SizeLimit;
+use bincode::{serialize, deserialize};
+
+
+use byteorder::{ReadBytesExt, BigEndian, LittleEndian};
 use std::io::Cursor;
 use std::collections::HashMap;
 use std::path::Path;
 use std::str;
 use std::mem;
+
 mod dicom_types;
 use dicom_types::{DicomDict, DicomObjectDict, DicomDictElt, DicomElt, DicomKeywordDict};
 mod dicom_dict;
 use dicom_dict::dicom_dictionary_init;
 use dicom_types::DicomObject;
-use std::io::Result;
+use std::io::{Result, Error, ErrorKind};
+use std::fs::{self, DirEntry};
 use memmap::{Mmap, Protection};
-use rulinalg::matrix;
-
-//mod filereader;
 
 struct DicomLib<'a> {
     dict: DicomDict<'a>,
@@ -72,7 +80,6 @@ fn pixeldata_parse<'a>(data: &[u8], sz: usize, vr: &str, elementsopt: Option<&Di
         },
         None => (xr, 1 as usize, 1 as usize),
     };
-    println!("xr: {} yr: {} zr: {}", xr, yr, zr);
     if zr != 1 {panic!("don't yet support > 2D pixel matrices")}
     let (result, newoff) = if sz != 0xffffffff {
         let dp : &[u8]= &data[0..sz];
@@ -81,8 +88,7 @@ fn pixeldata_parse<'a>(data: &[u8], sz: usize, vr: &str, elementsopt: Option<&Di
                 let mut r = Cursor::new(dp);
                 let mut resvec16 : Vec<u16> = Vec::new();
                 for _ in 0..(sz/2) { resvec16.push(r.read_u16::<LittleEndian>().unwrap()); }
-                let m = matrix::Matrix::new(xr, yr, resvec16);
-                DicomElt::UInt16m(m)
+                DicomElt::UInt16s(resvec16)
             },
             1 => {
                 let mut resvec8 : Vec<u8> = Vec::new();
@@ -227,7 +233,6 @@ fn numeric_parse_big<'a>(mut c : Cursor<&[u8]>, elt : DicomElt, count : usize) -
 fn string_parse(data: &[u8]) -> DicomElt {
     let dsstr = u8tostr(data);
     let vstr : Vec<&str> = dsstr.split('\\').collect();
-    println!("vsstr: {:?}", vstr);
     let mut isf64 = false;
     {
         for &s in &vstr {
@@ -276,7 +281,6 @@ fn element<'a>(dict: &DicomDict<'a>, data: &[u8], start: &mut usize, evr: bool, 
                -> ((u16, u16), DicomElt) {
     let mut off = *start;
     let (grp, elt) = (u8tou16(&data[off..off+2]), u8tou16(&data[off+2..off+4]));
-    println!("grp: {} elt: {}", grp, elt);
     off += 4;
     let gelt = (grp, elt);
     let (mut vr, lenbytes, diffvr) = if evr && !always_implicit(grp, elt) {
@@ -300,18 +304,17 @@ fn element<'a>(dict: &DicomDict<'a>, data: &[u8], start: &mut usize, evr: bool, 
     } else if isodd(grp as usize) && grp > 0x0008 {
         vr = "UN";
     }
-    println!("grp: {} elt: {} diffvr: {} vr: {} lenbytes: {} data[0]: {} data[1]: {}",
-             grp, elt, diffvr, vr, lenbytes, data[off], data[off+1]);
+//    println!("grp: {} elt: {} diffvr: {} vr: {} lenbytes: {} data[0]: {} data[1]: {}",
+//             grp, elt, diffvr, vr, lenbytes, data[off], data[off+1]);
     let mut sz = if lenbytes == 4 {
         u8tou32(&data[off..off+4]) as usize }
     else {
         let val = u8tou16(&data[off..off+2]) as usize;
-        println!("data[0]: {} data[1]: {}, val: {}", data[off], data[off+1], val);
+        //println!("data[0]: {} data[1]: {}, val: {}", data[off], data[off+1], val);
         val
     };
     off += lenbytes;
     let end = off + sz;
-    println!("vr: {} off: {} sz: {}", vr, off, sz);
     let entry = if sz == 0 || vr == "XX" {
         DicomElt::Empty
     } else if sz == 0xffffffff {
@@ -346,20 +349,18 @@ fn element<'a>(dict: &DicomDict<'a>, data: &[u8], start: &mut usize, evr: bool, 
              _ => panic!("bad vr: {}", vr),
         }
     };
-    println!("sz: {}", sz);
     off += sz as usize;
     if isodd(sz) {off += 1;}
     *start = off;
     (gelt, entry)
 }
 
-fn read_dataset<'a>(dict: &DicomDict<'a>, data: &[u8], start: usize) -> Result<DicomObject<'a>> {
+fn read_dataset<'a>(dict: &DicomDict<'a>, data: &[u8], start: usize) -> Result<DicomObject> {
     let mut off = start;
     let sig = u8tostr(&data[off+4..off+6]);
     let evr = VR_NAMES.contains(&sig);
     let mut elements : DicomObjectDict = HashMap::new();
     let mut state : DicomKeywordDict = HashMap::new();
-    println!("start: {}", off);
     while off < data.len() - 2 {
         let (gelt, elt) = element(dict, data, &mut off, evr, Some(&elements));
         let tag = u16tou32(&[gelt.1, gelt.0] );
@@ -367,16 +368,15 @@ fn read_dataset<'a>(dict: &DicomDict<'a>, data: &[u8], start: usize) -> Result<D
             let ref dictelt = dict[&tag];
             let keyword = dictelt.keyword;
             assert!(!state.contains_key(keyword));
-            println!("keyword: {}", keyword);
-            state.insert(keyword, elt.to_owned());
+            state.insert(keyword.to_string(), elt.to_owned());
         } else {
-            println!("tag: {:08X} - {:04X} {:04X} not found in dict", tag, gelt.0, gelt.1);
+            //println!("tag: {:08X} - {:04X} {:04X} not found in dict", tag, gelt.0, gelt.1);
         }
         assert!(!elements.contains_key(&tag));
-        println!("tag: {:08X} off: {}", tag, off);
+        //println!("tag: {:08X} off: {}", tag, off);
         elements.insert(tag, elt);
     }
-    Ok(DicomObject {odict : elements, keydict : state } )
+    Ok(DicomObject { keydict : state } )
 }
 
 impl<'a> DicomLib<'a> {
@@ -386,7 +386,7 @@ impl<'a> DicomLib<'a> {
     }
     fn parse<P>(&self, path: P) -> Result<DicomObject> where P : AsRef<Path> {
         let mut off = 0x80;
-        let file_mmap = Mmap::open_path(path, Protection::Read).expect("mmap fail");
+        let file_mmap = Mmap::open_path(path, Protection::Read)?;
         let data: &[u8] = unsafe { file_mmap.as_slice() };
         let magic = str::from_utf8(&data[off..off+4]).unwrap();
 
@@ -394,15 +394,70 @@ impl<'a> DicomLib<'a> {
         off += 4;
         read_dataset(&self.dict, data, off)
     }
+    fn parse_set<P>(&self, set: P) -> Result<Vec<DicomObject>> where P : AsRef<Path> {
+        let set = set.as_ref();
+        let mut v = Vec::new();
+        for entry in fs::read_dir(set)? {
+            let entry = entry?;
+            let path = entry.path();
+            if !path.to_str().unwrap().contains(".dcm") { continue;}
+            v.push(self.parse(path)?);
+        }
+        Ok(v)
+    }
 }
+
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::prelude::*;
+    use std::fs::{File, Metadata};
+
     #[test]
     fn parse_works() {
         let dlib = DicomLib::new();
-        let result = dlib.parse("resources/000001.dcm");
+        let result = (dlib.parse("resources/000001.dcm")).unwrap();
+        //let result = result?;
+        for (k, v) in result.keydict.iter() {
+            if *k != "PixelData" {
+                println!("key: {} val: {:?}", k, v);
+            };
+        }
+    }
+    #[test]
+    fn parse_set_works() {
+        let dlib = DicomLib::new();
+        let result = dlib.parse_set("resources/LIDC").unwrap();
+        let mut i = 0;
+        for ref r in result {
+            println!("entry: {}", i);
+            i += 1;
+            for (k, v) in r.keydict.iter() {
+                if *k != "PixelData" {
+                    println!("key: {} val: {:?}", k, v);
+                };
+            }
+            break;
+        }
+    }
+    #[test]
+    fn parse_set_serialize() {
+        let dlib = DicomLib::new();
+        let result = dlib.parse_set("resources/LIDC").unwrap();
+        let limit = SizeLimit::Infinite;
+        let encoded : Vec<u8> = serialize(&result, limit).unwrap();
+        let decoded : Vec<DicomObject> = deserialize(&encoded[..]).unwrap();
+        assert_eq!(result, decoded);
+        {
+            let mut buffer = File::create("dicom.rsbin").unwrap();
+            buffer.write(&encoded);
+        }
+        let mut buffer = File::open("dicom.rsbin").unwrap();
+        let mut encoded2 = Vec::new();
+        buffer.read_to_end(&mut encoded2);
+        let decoded2 : Vec<DicomObject> = deserialize(&encoded2[..]).unwrap();
+        assert_eq!(result, decoded2);
     }
 }

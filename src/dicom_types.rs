@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use rulinalg::matrix::Matrix;
 
 #[derive(Debug)]
 pub struct DicomDictElt<'a> {
@@ -10,16 +9,15 @@ pub struct DicomDictElt<'a> {
     pub keyword: &'a str,
 }
 
-pub struct DicomObject<'a> {
-    pub odict: DicomObjectDict<'a>,
-    pub keydict: DicomKeywordDict<'a>,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DicomObject {
+    pub keydict: DicomKeywordDict,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum DicomElt {
     Int16s(Vec<i16>),
     UInt16s(Vec<u16>),
-    UInt16m(Matrix<u16>),
     Int32s(Vec<i32>),
     UInt32s(Vec<u32>),
     Float64s(Vec<f64>),
@@ -32,4 +30,4 @@ pub enum DicomElt {
 
 pub type DicomDict<'a> = HashMap<u32, DicomDictElt<'a>>;
 pub type DicomObjectDict<'a> = HashMap<u32, DicomElt>;
-pub type DicomKeywordDict<'a> = HashMap<&'a str, DicomElt>;
+pub type DicomKeywordDict = HashMap<String, DicomElt>;
