@@ -5,7 +5,7 @@ use std::io::Cursor;
 use std::collections::HashMap;
 use std::str;
 
-use dicom_types::{DicomDict, DicomObjectDict, DicomElt, DicomKeywordDict};
+use dicom_types::{DicomDict, DicomObjectDict, DicomElt, DicomKeywordDict, DcmImg16, DcmImg8};
 use dicom_types::DicomObject;
 
 
@@ -65,12 +65,10 @@ fn pixeldata_parse<'a>(data: &[u8], sz: usize, vr: &str, elementsopt: Option<&Di
                 let mut r = Cursor::new(dp);
                 let mut resvec16 : Vec<u16> = Vec::new();
                 for _ in 0..(sz/2) { resvec16.push(r.read_u16::<LittleEndian>().unwrap()); }
-                DicomElt::UInt16s(resvec16)
+                DicomElt::Image16( DcmImg16 { xr : xr, yr : yr, zr : zr, data : resvec16 } )
             },
             1 => {
-                let mut resvec8 : Vec<u8> = Vec::new();
-                resvec8.extend_from_slice(dp);
-                DicomElt::Bytes(resvec8)
+                DicomElt::Image8( DcmImg8 { xr : xr, yr : yr, zr : zr, data : dp.to_owned() } )
             },
             _ => panic!("bad wsize"),
 
@@ -87,7 +85,7 @@ fn pixeldata_parse<'a>(data: &[u8], sz: usize, vr: &str, elementsopt: Option<&Di
             if grp == 0xFFFE && elt == 0xE0DD { break; }
             if grp != 0xFFFE || elt != 0xE000 { panic!("dicom: expected item tag in encapsulated pixel data"); }
             let dp = &data[off..off+xr];
-            let val = match wsize {
+            match wsize {
                 2 =>  {
                     let mut r = Cursor::new(dp);
                     for _ in 0..(xr/2) {
@@ -100,8 +98,8 @@ fn pixeldata_parse<'a>(data: &[u8], sz: usize, vr: &str, elementsopt: Option<&Di
             off += xr;
         };
         match wsize {
-            2 => (DicomElt::UInt16s(resvec16), off),
-            1 => (DicomElt::Bytes(resvec8), off),
+            2 => (DicomElt::Image16( DcmImg16 { xr : xr, yr : yr, zr : zr, data : resvec16 } ), off),
+            1 => (DicomElt::Image8( DcmImg8 { xr : xr, yr : yr, zr : zr, data : resvec8 } ), off) ,
             _ => panic!("bad wsize"),
         }
     };
@@ -232,7 +230,7 @@ fn string_parse(data: &[u8]) -> DicomElt {
     }
 }
 
-fn numeric_parse(mut c : Cursor<&[u8]>, elt : DicomElt, count : usize, order: Endian) -> DicomElt {
+fn numeric_parse(c : Cursor<&[u8]>, elt : DicomElt, count : usize, order: Endian) -> DicomElt {
     match order {
         Endian::Big => numeric_parse_big(c, elt, count),
         Endian::Little => numeric_parse_little(c, elt, count),
@@ -261,20 +259,16 @@ fn element<'a>(dict: &DicomDict<'a>, data: &[u8], start: &mut usize, evr: bool, 
     let (grp, elt) = (u8tou16(&data[off..off+2]), u8tou16(&data[off+2..off+4]));
     off += 4;
     let gelt = (grp, elt);
-    let (mut vr, lenbytes, diffvr) = if evr && !always_implicit(grp, elt) {
+    let (mut vr, lenbytes) = if evr && !always_implicit(grp, elt) {
         let vr = u8tostr(&data[off..off+2]);
         let lenbytes = if EXTRA_LENGTH_VRS.contains(&vr) { off += 4; 4} else { off += 2; 2 };
-        let diffvr = match lookup_vr(dict, gelt) {
-            Some(newvr) => newvr == vr,
-            None => false
-        };
-        (vr, lenbytes, diffvr)
+        (vr, lenbytes)
     } else {
         let vr = match lookup_vr(dict, gelt) {
             Some(vr) => vr,
             None => panic!("bad vr"),
         };
-        (vr, 4, false)
+        (vr, 4)
     };
 
     if isodd(grp as usize) && grp > 0x0008 && 0x0010 <= elt && elt < 0x00FF {
@@ -318,7 +312,7 @@ fn element<'a>(dict: &DicomDict<'a>, data: &[u8], start: &mut usize, evr: bool, 
             "SS" => numeric_parse(r, DicomElt::Int16s(vec![]), sz/2, Endian::Little),
             "UL" => numeric_parse(r, DicomElt::UInt32s(vec![]), sz/4, Endian::Little),
             "US" => numeric_parse(r, DicomElt::UInt16s(vec![]), sz/2, Endian::Little),
-            "OB" | "UN" => { let mut v = Vec::new(); v.extend_from_slice(&data[off..end]); DicomElt::Bytes(v)},
+            "OB" | "UN" => { DicomElt::Bytes(data[off..end].to_owned())},
             "OD" => numeric_parse(r, DicomElt::Float64s(vec![]), sz/8, Endian::Big),
             "OF" => numeric_parse(r, DicomElt::Float32s(vec![]), sz/4, Endian::Big),
             "OW" => numeric_parse(r, DicomElt::UInt16s(vec![]), sz/2, Endian::Big),
