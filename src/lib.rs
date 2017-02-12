@@ -1,6 +1,7 @@
 extern crate memmap;
 extern crate flate2;
 extern crate byteorder;
+extern crate rulinalg;
 
 use byteorder::{ReadBytesExt, WriteBytesExt, BigEndian, LittleEndian};
 use std::io::Cursor;
@@ -15,6 +16,7 @@ use dicom_dict::dicom_dictionary_init;
 use dicom_types::DicomObject;
 use std::io::Result;
 use memmap::{Mmap, Protection};
+use rulinalg::matrix;
 
 //mod filereader;
 
@@ -44,7 +46,6 @@ fn u8tostr(bytes: &[u8]) -> &str { str::from_utf8(bytes).unwrap() }
 
 fn isodd(x : usize) -> bool { x % 2 == 1 }
 
-
 fn always_implicit(grp: u16, elt: u16) -> bool {
     grp == 0xFFFE && (elt == 0xE0DD || elt == 0xE000 || elt == 0xE00D)
 }
@@ -71,17 +72,17 @@ fn pixeldata_parse<'a>(data: &[u8], sz: usize, vr: &str, elementsopt: Option<&Di
         },
         None => (xr, 1 as usize, 1 as usize),
     };
-    if yr != 1 || zr != 1 {panic!("don't yet support > 1D pixel arrays")}
+    println!("xr: {} yr: {} zr: {}", xr, yr, zr);
+    if zr != 1 {panic!("don't yet support > 2D pixel matrices")}
     let (result, newoff) = if sz != 0xffffffff {
         let dp : &[u8]= &data[0..sz];
         let v = match wsize {
             2 => {
                 let mut r = Cursor::new(dp);
                 let mut resvec16 : Vec<u16> = Vec::new();
-                for _ in 0..(sz/2) {
-                    resvec16.push(r.read_u16::<LittleEndian>().unwrap())
-                };
-                DicomElt::UInt16s(resvec16)
+                for _ in 0..(sz/2) { resvec16.push(r.read_u16::<LittleEndian>().unwrap()); }
+                let m = matrix::Matrix::new(xr, yr, resvec16);
+                DicomElt::UInt16m(m)
             },
             1 => {
                 let mut resvec8 : Vec<u8> = Vec::new();
@@ -357,12 +358,22 @@ fn read_dataset<'a>(dict: &DicomDict<'a>, data: &[u8], start: usize) -> Result<D
     let sig = u8tostr(&data[off+4..off+6]);
     let evr = VR_NAMES.contains(&sig);
     let mut elements : DicomObjectDict = HashMap::new();
-    let state : DicomKeywordDict = HashMap::new();
+    let mut state : DicomKeywordDict = HashMap::new();
     println!("start: {}", off);
     while off < data.len() - 2 {
         let (gelt, elt) = element(dict, data, &mut off, evr, Some(&elements));
-        let tag = u16tou32(&[gelt.0, gelt.1] );
-        println!("tag: {} off: {}", tag, off);
+        let tag = u16tou32(&[gelt.1, gelt.0] );
+        if dict.contains_key(&tag) {
+            let ref dictelt = dict[&tag];
+            let keyword = dictelt.keyword;
+            assert!(!state.contains_key(keyword));
+            println!("keyword: {}", keyword);
+            state.insert(keyword, elt.to_owned());
+        } else {
+            println!("tag: {:08X} - {:04X} {:04X} not found in dict", tag, gelt.0, gelt.1);
+        }
+        assert!(!elements.contains_key(&tag));
+        println!("tag: {:08X} off: {}", tag, off);
         elements.insert(tag, elt);
     }
     Ok(DicomObject {odict : elements, keydict : state } )
@@ -383,7 +394,6 @@ impl<'a> DicomLib<'a> {
         off += 4;
         read_dataset(&self.dict, data, off)
     }
-
 }
 
 
