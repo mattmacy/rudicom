@@ -9,7 +9,7 @@ extern crate bincode;
 extern crate serde;
 
 mod dicom_types;
-use dicom_types::{DicomObject, DicomDict};
+use dicom_types::{DicomSlice, DicomScan, DicomDict};
 mod dicom_dict;
 use dicom_dict::dicom_dictionary_init;
 mod dataset;
@@ -36,7 +36,7 @@ impl<'a> DicomLib<'a> {
         DicomLib { dict : dicom_dictionary_init() }
     }
 
-    pub fn parse<P>(&self, path: P) -> Result<DicomObject> where P : AsRef<Path> {
+    pub fn parse<P>(&self, path: P) -> Result<DicomSlice> where P : AsRef<Path> {
         let mut off = 0x80;
         let file_mmap = Mmap::open_path(path, Protection::Read)?;
         let data: &[u8] = unsafe { file_mmap.as_slice() };
@@ -47,7 +47,7 @@ impl<'a> DicomLib<'a> {
         read_dataset(&self.dict, data, off)
     }
 
-    pub fn parse_set<P>(&self, set: P) -> Result<Vec<DicomObject>> where P : AsRef<Path> {
+    pub fn parse_scan<P>(&self, set: P) -> Result<DicomScan> where P : AsRef<Path> {
         let set = set.as_ref();
         let mut v = Vec::new();
         for entry in fs::read_dir(set)? {
@@ -59,7 +59,7 @@ impl<'a> DicomLib<'a> {
         Ok(v)
     }
 
-    pub fn serialize_set<P>(&self, path: P, set: Vec<DicomObject>) -> Result<usize> where P : AsRef<Path> {
+    pub fn serialize_scan<P>(&self, path: P, set: DicomScan) -> Result<usize> where P : AsRef<Path> {
         let mut buffer = File::create(path)?;
         let limit = SizeLimit::Infinite;
         let encoded : Vec<u8> = serialize(&set, limit).expect("serialize fail");
@@ -67,7 +67,7 @@ impl<'a> DicomLib<'a> {
         Ok(size)
     }
 
-    pub fn deserialize_set<P>(&self, path: P) -> Result<Vec<DicomObject>> where P : AsRef<Path> {
+    pub fn deserialize_scan<P>(&self, path: P) -> Result<DicomScan> where P : AsRef<Path> {
         let mut buffer = File::open(path)?;
         let mut encoded = Vec::new();
         let size = buffer.read_to_end(&mut encoded)?;
@@ -80,7 +80,6 @@ impl<'a> DicomLib<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::prelude::*;
 
     #[test]
     fn parse_works() {
@@ -97,16 +96,16 @@ mod tests {
     #[test]
     fn parse_set_works() {
         let dlib = DicomLib::new();
-        let result = dlib.parse_set("resources/LIDC").unwrap();
+        let result = dlib.parse_scan("resources/LIDC").unwrap();
     }
 
     #[test]
-    fn parse_set_serde() {
+    fn parse_scan_serde() {
         let dlib = DicomLib::new();
-        let result = dlib.parse_set("resources/LIDC").unwrap();
+        let result = dlib.parse_scan("resources/LIDC").unwrap();
         let limit = SizeLimit::Infinite;
         let encoded : Vec<u8> = serialize(&result, limit).unwrap();
-        let decoded : Vec<DicomObject> = deserialize(&encoded[..]).unwrap();
+        let decoded : Vec<DicomSlice> = deserialize(&encoded[..]).unwrap();
         assert_eq!(result, decoded);
         {
             let mut buffer = File::create("dicom.rsbin").unwrap();
@@ -115,7 +114,7 @@ mod tests {
         let mut buffer = File::open("dicom.rsbin").unwrap();
         let mut encoded2 = Vec::new();
         buffer.read_to_end(&mut encoded2);
-        let decoded2 : Vec<DicomObject> = deserialize(&encoded2[..]).unwrap();
+        let decoded2 : Vec<DicomSlice> = deserialize(&encoded2[..]).unwrap();
         assert_eq!(result, decoded2);
     }
 }

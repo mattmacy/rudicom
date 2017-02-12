@@ -10,8 +10,8 @@ pub struct DicomDictElt<'a> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct DicomObject {
-    pub keydict: DicomKeywordDict,
+pub struct DicomSlice {
+    pub keydict: DicomKwEltDict,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -47,5 +47,6 @@ pub enum DicomElt {
 }
 
 pub type DicomDict<'a> = HashMap<u32, DicomDictElt<'a>>;
-pub type DicomObjectDict<'a> = HashMap<u32, DicomElt>;
-pub type DicomKeywordDict = HashMap<String, DicomElt>;
+pub type DicomGeltEltDict = HashMap<u32, DicomElt>;
+pub type DicomKwEltDict = HashMap<String, DicomElt>;
+pub type DicomScan = Vec<DicomSlice>;

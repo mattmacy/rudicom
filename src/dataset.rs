@@ -5,9 +5,7 @@ use std::io::Cursor;
 use std::collections::HashMap;
 use std::str;
 
-use dicom_types::{DicomDict, DicomObjectDict, DicomElt, DicomKeywordDict, DcmImg16, DcmImg8};
-use dicom_types::DicomObject;
-
+use dicom_types::{DicomDict, DicomSlice, DicomGeltEltDict, DicomElt, DicomKwEltDict, DcmImg16, DcmImg8};
 
 enum Endian {
     Big,
@@ -35,7 +33,7 @@ fn always_implicit(grp: u16, elt: u16) -> bool {
     grp == 0xFFFE && (elt == 0xE0DD || elt == 0xE000 || elt == 0xE00D)
 }
 
-fn pixeldata_parse<'a>(data: &[u8], sz: usize, vr: &str, elementsopt: Option<&DicomObjectDict<'a>>) -> (DicomElt, usize) {
+fn pixeldata_parse<'a>(data: &[u8], sz: usize, vr: &str, elementsopt: Option<&DicomGeltEltDict>) -> (DicomElt, usize) {
     let (xr, wsize) = if vr == "OB" {(sz, 1)} else { (sz/2, 2) };
 
     let (xr, yr, zr) = match elementsopt {
@@ -252,7 +250,7 @@ fn lookup_vr<'a>(dict: &DicomDict<'a>, gelt: (u16, u16)) -> Option<&'a str> {
     }
 }
 
-fn element<'a>(dict: &DicomDict<'a>, data: &[u8], start: &mut usize, evr: bool, elements: Option<&DicomObjectDict<'a>>)
+fn element<'a>(dict: &DicomDict<'a>, data: &[u8], start: &mut usize, evr: bool, elements: Option<&DicomGeltEltDict>)
                -> ((u16, u16), DicomElt) {
     let mut off = *start;
     let (grp, elt) = (u8tou16(&data[off..off+2]), u8tou16(&data[off+2..off+4]));
@@ -326,12 +324,12 @@ fn element<'a>(dict: &DicomDict<'a>, data: &[u8], start: &mut usize, evr: bool, 
     (gelt, entry)
 }
 
-pub fn read_dataset<'a>(dict: &DicomDict<'a>, data: &[u8], start: usize) -> Result<DicomObject> {
+pub fn read_dataset<'a>(dict: &DicomDict<'a>, data: &[u8], start: usize) -> Result<DicomSlice> {
     let mut off = start;
     let sig = u8tostr(&data[off+4..off+6]);
     let evr = VR_NAMES.contains(&sig);
-    let mut elements : DicomObjectDict = HashMap::new();
-    let mut state : DicomKeywordDict = HashMap::new();
+    let mut elements : DicomGeltEltDict = HashMap::new();
+    let mut state : DicomKwEltDict = HashMap::new();
     while off < data.len() - 2 {
         let (gelt, elt) = element(dict, data, &mut off, evr, Some(&elements));
         let tag = u16tou32(&[gelt.1, gelt.0] );
@@ -347,5 +345,5 @@ pub fn read_dataset<'a>(dict: &DicomDict<'a>, data: &[u8], start: usize) -> Resu
         //println!("tag: {:08X} off: {}", tag, off);
         elements.insert(tag, elt);
     }
-    Ok(DicomObject { keydict : state } )
+    Ok(DicomSlice { keydict : state } )
 }
