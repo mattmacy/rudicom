@@ -57,7 +57,6 @@ fn pixeldata_parse<'a>(data: &[u8], sz: usize, vr: &str, elementsopt: Option<&Di
         },
         None => (xr, 1 as usize, 1 as usize),
     };
-    if zr != 1 {panic!("don't yet support > 2D pixel matrices")}
     let (result, newoff) = if sz != 0xffffffff {
         let dp : &[u8]= &data[0..sz];
         let v = match wsize {
