@@ -56,7 +56,22 @@ impl<'a> DicomLib<'a> {
             if !path.to_str().unwrap().contains(".dcm") { continue;}
             v.push(self.parse(path)?);
         }
+        v.sort();
         Ok(v)
+    }
+
+    pub fn get_pixels_hu(ref scan: DicomScan) -> Vec<Vec<i16>> {
+        let mut image : Vec<Vec<i16>> = Vec::new();
+        image.reserve(scan.len());
+        for ref v in scan {
+            image.push(v.pixel_data().to_owned());
+        }
+        for ref mut slice in &mut image {
+            for i in 0..slice.len() {
+                if slice[i] == -2000 {slice[i] = 0};
+            };
+        }
+        image
     }
 
     pub fn serialize_scan<P>(&self, path: P, set: DicomScan) -> Result<usize> where P : AsRef<Path> {
@@ -85,10 +100,9 @@ mod tests {
     fn parse_works() {
         let dlib = DicomLib::new();
         let result = (dlib.parse("resources/000001.dcm")).unwrap();
-        //let result = result?;
         for (k, v) in result.keydict.iter() {
             if *k != "PixelData" {
-                println!("key: {} val: {:?}", k, v);
+                println!("{}: {:?}", k, v);
             };
         }
     }
