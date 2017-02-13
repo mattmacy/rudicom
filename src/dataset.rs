@@ -60,8 +60,8 @@ fn pixeldata_parse<'a>(data: &[u8], sz: usize, vr: &str, elementsopt: Option<&Di
         let v = match wsize {
             2 => {
                 let mut r = Cursor::new(dp);
-                let mut resvec16 : Vec<u16> = Vec::new();
-                for _ in 0..(sz/2) { resvec16.push(r.read_u16::<LittleEndian>().unwrap()); }
+                let mut resvec16 : Vec<i16> = Vec::new();
+                for _ in 0..(sz/2) { resvec16.push(r.read_i16::<LittleEndian>().unwrap()); }
                 DicomElt::Image16( DcmImg16 { xr : xr, yr : yr, zr : zr, data : resvec16 } )
             },
             1 => {
@@ -86,7 +86,7 @@ fn pixeldata_parse<'a>(data: &[u8], sz: usize, vr: &str, elementsopt: Option<&Di
                 2 =>  {
                     let mut r = Cursor::new(dp);
                     for _ in 0..(xr/2) {
-                        resvec16.push(r.read_u16::<LittleEndian>().unwrap())
+                        resvec16.push(r.read_i16::<LittleEndian>().unwrap())
                     };
                 }
                 1 => resvec8.extend_from_slice(dp),
