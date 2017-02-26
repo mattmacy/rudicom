@@ -206,25 +206,11 @@ fn numeric_parse_big<'a>(mut c : Cursor<&[u8]>, elt : DicomElt, count : usize) -
 fn string_parse(data: &[u8]) -> DicomElt {
     let dsstr = u8tostr(data);
     let vstr : Vec<&str> = dsstr.split('\\').collect();
-    let mut isf64 = false;
-    {
-        for &s in &vstr {
-            if s.contains(".") || s.contains("-") {isf64 = true; break}
-        }
-    }
-    if isf64 {
-        let mut v : Vec<f64> = Vec::new();
-        for &s in &vstr {
-            v.push(s.trim().parse().unwrap());
-        };
-        DicomElt::Float64s(v)
-    } else {
-        let mut v : Vec<u32> = Vec::new();
-        for &s in &vstr {
-            v.push(s.trim().parse().unwrap());
-        };
-        DicomElt::UInt32s(v)
-    }
+    let mut v : Vec<f64> = Vec::new();
+    for &s in &vstr {
+        v.push(s.trim().parse().unwrap());
+    };
+    DicomElt::Float64s(v)
 }
 
 fn numeric_parse(c : Cursor<&[u8]>, elt : DicomElt, count : usize, order: Endian) -> DicomElt {
