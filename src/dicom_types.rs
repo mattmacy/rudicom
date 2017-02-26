@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::ops::Index;
-use std::cmp::Ordering;
 
 #[derive(Debug)]
 pub struct DicomDictElt<'a> {
@@ -32,6 +31,13 @@ pub struct DcmImg8 {
     pub data : Vec<u8>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DicomScan {
+    pub slice_data: Vec<DicomSlice>,
+    pub image: DcmImg16
+}
+
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum DicomElt {
     Int16s(Vec<i16>),
@@ -51,7 +57,6 @@ pub enum DicomElt {
 pub type DicomDict<'a> = HashMap<u32, DicomDictElt<'a>>;
 pub type DicomGeltEltDict = HashMap<u32, DicomElt>;
 pub type DicomKwEltDict = HashMap<String, DicomElt>;
-pub type DicomScan = Vec<DicomSlice>;
 
 impl Index<String> for DicomSlice {
     type Output = DicomElt;
@@ -62,36 +67,37 @@ impl Index<String> for DicomSlice {
 }
 
 impl DicomSlice {
-    fn pos(&self) -> f64 {
+    pub fn pos(&self) -> f64 {
         match self["ImagePositionPatient".to_owned()] {
             DicomElt::Float64s(ref v) => v[2],
             _ =>  panic!("no patient position"),
         }
     }
-    pub fn pixel_data(&self) -> &Vec<i16> {
+
+    pub fn pixel_data(&self) -> &DcmImg16 {
         match self["PixelData".to_owned()] {
-            DicomElt::Image16(DcmImg16 {data : ref v, ..}) => v,
+            DicomElt::Image16(ref v) => v,
             _ =>  panic!("unexpected image type"),
+        }
+    }
+    pub fn slope(&self) -> f64 {
+        match self["RescaleSlope".to_owned()] {
+            DicomElt::Float64s(ref v) => v[0],
+            _ => panic!("unknown slope type"),
+        }
+    }
+    pub fn intercept(&self) -> i16 {
+        match self["RescaleIntercept".to_owned()] {
+            DicomElt::UInt32s(ref v)  => v[0] as i16,
+            DicomElt::Float64s(ref v) => v[0] as i16,
+            _ => panic!("unknown intercept type"),
+        }
+    }
+    pub fn thickness(&self) -> f64 {
+        match self["SliceThickness".to_owned()] {
+            DicomElt::Float64s(ref v) => v[0],
+            _ => 0.0,
         }
     }
 }
 
-impl Ord for DicomSlice {
-    fn cmp(&self, other: &DicomSlice) -> Ordering {
-        self.pos().partial_cmp(&other.pos()).expect("no ordering")
-    }
-}
-
-impl PartialOrd for DicomSlice {
-    fn partial_cmp(&self, other: &DicomSlice) -> Option<Ordering> {
-        Some(self.pos().partial_cmp(&other.pos()).expect("no ordering for slices") )
-    }
-}
-
-impl PartialEq for DicomSlice {
-    fn eq(&self, other: &DicomSlice) -> bool {
-        self.pos() == other.pos()
-    }
-}
-
-impl Eq for DicomSlice {}
