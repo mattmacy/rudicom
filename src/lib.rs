@@ -9,7 +9,7 @@ extern crate bincode;
 extern crate serde;
 
 mod dicom_types;
-use dicom_types::{DicomSlice, DicomScan, DicomDict};
+use dicom_types::{DicomSlice, DicomScan, DicomDict, DcmImg16, DicomElt};
 mod dicom_dict;
 use dicom_dict::dicom_dictionary_init;
 mod dataset;
@@ -56,20 +56,35 @@ impl<'a> DicomLib<'a> {
             if !path.to_str().unwrap().contains(".dcm") { continue;}
             v.push(self.parse(path)?);
         }
-        v.sort();
-        Ok(v)
+        v.sort_by(|a, b| a.pos().partial_cmp(&b.pos()).expect("Nan"));
+        let pix_data = v[0].pixel_data().clone();
+        let pix_len = pix_data.data.len();
+        let scan_len = v.len();
+        assert_eq!(pix_len, pix_data.xr*pix_data.yr);
+        let mut ivec : Vec<i16> = Vec::with_capacity(scan_len*pix_len);
+        for slice in v.iter_mut() {
+            let pix_data = match slice.keydict.remove("PixelData") {
+                Some(DicomElt::Image16(v)) => v,
+                Some(_) | None => panic!("no PixelData")
+            };
+            ivec.extend_from_slice(&pix_data.data[0..]);
+        };
+        let image = DcmImg16 {xr: pix_data.xr, yr: pix_data.yr, zr: scan_len, data: ivec};
+        Ok(DicomScan {slice_data: v, image: image})
     }
 
-    pub fn get_pixels_hu(ref scan: DicomScan) -> Vec<Vec<i16>> {
-        let mut image : Vec<Vec<i16>> = Vec::new();
-        image.reserve(scan.len());
-        for ref v in scan {
-            image.push(v.pixel_data().to_owned());
-        }
-        for ref mut slice in &mut image {
-            for i in 0..slice.len() {
-                if slice[i] == -2000 {slice[i] = 0};
-            };
+    pub fn get_pixels_hu(ref scan: DicomScan) -> Vec<i16> {
+        let mut image : Vec<i16> = scan.image.data.clone();
+        for v in image.iter_mut().filter(|x| **x == -2000) { *v = 0; };
+        let increment = scan.image.xr*scan.image.yr;
+        for i in 0..scan.slice_data.len() {
+            let intercept = scan.slice_data[i].intercept();
+            let slope = scan.slice_data[i].slope();
+            let offset = i*increment;
+            if slope != 1.0 {
+                for v in image[offset..offset+increment].iter_mut() { *v = ((*v as f64) * slope) as i16;};
+            }
+            for v in image[offset..offset+increment].iter_mut() { *v += intercept;};
         }
         image
     }
@@ -111,6 +126,8 @@ mod tests {
     fn parse_set_works() {
         let dlib = DicomLib::new();
         let result = dlib.parse_scan("resources/LIDC").unwrap();
+        let thickness = result[0].thickness();
+        println!("thickness: {}", thickness);
     }
 
     #[test]
